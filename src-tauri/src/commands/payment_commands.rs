@@ -7,6 +7,9 @@ use serde_json::json;
 use std::fs;
 use uuid::Uuid;
 
+#[cfg(target_os = "windows")]
+use winapi::um::winuser::{SetCursorPos, mouse_event, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP};
+
 #[command]
 pub async fn generate_virtual_card(data_store: State<'_, Arc<DataStore>>) -> Result<VirtualCard, String> {
     // 获取设置中的自定义卡头和卡段范围
@@ -1431,6 +1434,8 @@ pub async fn inject_auto_submit_script(
                     // 点击提交按钮
                     console.log('[AutoSubmit] 🖱️ 点击提交按钮');
                     submitButton.click();
+                    // 记录第一次点击提交按钮的时间，用于后续 HCaptcha 脚本判断「点击后延迟」
+                    window.__AUTO_SUBMIT_FIRST_CLICK_TIME__ = Date.now();
                     
                     // 1秒后再次点击以确保提交
                     setTimeout(() => {
@@ -1457,6 +1462,223 @@ pub async fn inject_auto_submit_script(
     
     println!("[AutoSubmit] 自动提交脚本已注入到窗口: {}", window_label);
     
+    Ok(())
+}
+
+/// 监控 HCaptcha 并在可见时用系统鼠标点击指定区域
+#[command]
+pub async fn start_hcaptcha_auto_click(
+    app: AppHandle,
+    window_label: String,
+) -> Result<(), String> {
+    // 获取窗口
+    let window = app
+        .get_webview_window(&window_label)
+        .ok_or("Window not found".to_string())?;
+
+    // 注入前端轮询脚本：每 3 秒检查一次 HCaptcha 容器是否可见，并通过 hash 与 Rust 通信
+    let js_code = r#"
+        (function() {
+            console.log('[HCaptchaAutoClick] 监控脚本已注入');
+
+            function isElementVisible(el) {
+                if (!el) return false;
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+                    return false;
+                }
+                const rect = el.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0) return false;
+                return true;
+            }
+
+            // 检测 HCaptcha：优先用 .HCaptcha-container，其次通过「大面积灰色遮罩层」做启发式检测
+            function checkHCaptcha() {
+                try {
+                    // 只有在自动提交脚本点击提交按钮并且已过去至少 5 秒后，才开始真正监控 HCaptcha
+                    if (!window.__AUTO_SUBMIT_FIRST_CLICK_TIME__) {
+                        return;
+                    }
+                    const elapsed = Date.now() - window.__AUTO_SUBMIT_FIRST_CLICK_TIME__;
+                    if (elapsed < 5000) {
+                        return;
+                    }
+
+                    let anyVisible = false;
+
+                    // 1) 先尝试原来的 .HCaptcha-container（有些页面不是在 iframe 里）
+                    const nodes = Array.from(document.querySelectorAll('.HCaptcha-container'));
+                    if (nodes.some(isElementVisible)) {
+                        anyVisible = true;
+                    }
+
+                    // 2) 如果没检测到，再尝试用「大面积灰色遮罩层」来推测是否有人机验证弹框
+                    if (!anyVisible) {
+                        const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+                        const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+                        const viewportArea = vw * vh || 1;
+
+                        const candidates = Array.from(document.querySelectorAll('div, section, main, aside, article'));
+                        for (const el of candidates) {
+                            const style = window.getComputedStyle(el);
+                            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
+
+                            const rect = el.getBoundingClientRect();
+                            if (rect.width <= 0 || rect.height <= 0) continue;
+
+                            // 要求覆盖至少 30% 视口面积，基本可以认为是遮罩
+                            const areaRatio = (rect.width * rect.height) / viewportArea;
+                            if (areaRatio < 0.3) continue;
+
+                            const bg = style.backgroundColor;
+                            if (!bg || bg === 'transparent' || bg === 'rgba(0, 0, 0, 0)') continue;
+
+                            // 粗略判断是否为「灰色/半透明」
+                            let maybeOverlay = false;
+                            const m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([0-9.]+))?\)/);
+                            if (m) {
+                                const r = parseInt(m[1], 10);
+                                const g = parseInt(m[2], 10);
+                                const b = parseInt(m[3], 10);
+                                const alpha = m[4] !== undefined ? parseFloat(m[4]) : 1;
+                                const isGray = Math.abs(r - g) < 20 && Math.abs(g - b) < 20;
+                                if (isGray && alpha > 0.1) {
+                                    maybeOverlay = true;
+                                }
+                            } else {
+                                // 非 rgba 形式但有背景色，也可以认为是候选遮罩
+                                maybeOverlay = true;
+                            }
+
+                            if (maybeOverlay) {
+                                anyVisible = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (anyVisible) {
+                        if (!window.location.hash.includes('___HCAPTCHA_VISIBLE___')) {
+                            window.location.hash = '#___HCAPTCHA_VISIBLE___';
+                            console.log('[HCaptchaAutoClick] 检测到 HCaptcha 或遮罩可见');
+                        }
+                    } else {
+                        // if (!window.location.hash.includes('___HCAPTCHA_HIDDEN___')) {
+                        //     window.location.hash = '#___HCAPTCHA_HIDDEN___';
+                        //     console.log('[HCaptchaAutoClick] HCaptcha / 遮罩已隐藏或消失');
+                        // }
+                    }
+                } catch (e) {
+                    console.error('[HCaptchaAutoClick] 检查出错:', e);
+                }
+            }
+
+            // 立即检查一次，然后每 3 秒检查一次
+            checkHCaptcha();
+            window.__HCAPTCHA_INTERVAL__ && clearInterval(window.__HCAPTCHA_INTERVAL__);
+            window.__HCAPTCHA_INTERVAL__ = setInterval(checkHCaptcha, 3000);
+        })();
+    "#.to_string();
+
+    window.eval(&js_code).map_err(|e| {
+        eprintln!("[HCaptchaAutoClick] 注入监控脚本失败: {}", e);
+        e.to_string()
+    })?;
+
+    println!("[HCaptchaAutoClick] 已注入监控脚本到窗口: {}", window_label);
+
+    // 启动后台任务：根据 URL hash 触发系统鼠标点击
+    let window_for_monitor = window.clone();
+    tauri::async_runtime::spawn(async move {
+        use std::time::Duration;
+
+        println!("[HCaptchaAutoClick] 开始后台监控 HCaptcha 状态...");
+        let mut last_visible = false;
+        let mut idle_hidden_count: u32 = 0;
+        let max_hidden_idle: u32 = 20; // 连续 5 个周期不可见后自动停止（此处周期为 3 秒）
+
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
+            if !window_for_monitor.is_visible().unwrap_or(false) {
+                println!("[HCaptchaAutoClick] 窗口不可见/已关闭，停止监控");
+                break;
+            }
+
+            let url = match window_for_monitor.url() {
+                Ok(u) => u.to_string(),
+                Err(_) => {
+                    println!("[HCaptchaAutoClick] 获取窗口 URL 失败，继续重试");
+                    continue;
+                }
+            };
+
+            let visible = url.contains("___HCAPTCHA_VISIBLE___");
+            let hidden = url.contains("___HCAPTCHA_HIDDEN___");
+
+            if visible {
+                idle_hidden_count = 0;
+                last_visible = true;
+
+                #[cfg(target_os = "windows")]
+                {
+                    use rand::Rng;
+
+                    // 计算窗口左上角屏幕坐标（考虑缩放）
+                    if let Ok(position) = window_for_monitor.outer_position() {
+                        let scale_factor = window_for_monitor.scale_factor().unwrap_or(1.0);
+                        let mut rng = rand::thread_rng();
+
+                        // 相对窗口坐标范围（用户要求）
+                        let rel_x: f64 = rng.gen_range(120..=140) as f64;
+                        let rel_y: f64 = rng.gen_range(320..=335) as f64;
+
+                        let screen_x = (position.x as f64 + rel_x * scale_factor) as i32;
+                        let screen_y = (position.y as f64 + rel_y * scale_factor) as i32;
+
+                        unsafe {
+                            SetCursorPos(screen_x, screen_y);
+                            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+                            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+                        }
+
+                        println!(
+                            "[HCaptchaAutoClick] 已在屏幕坐标 ({}, {}) 模拟鼠标点击",
+                            screen_x, screen_y
+                        );
+                    } else {
+                        println!("[HCaptchaAutoClick] 获取窗口位置失败，无法执行点击");
+                    }
+                }
+
+                #[cfg(not(target_os = "windows"))]
+                {
+                    println!("[HCaptchaAutoClick] 当前平台不支持系统级鼠标点击，仅监控状态");
+                }
+            } else if hidden {
+                if last_visible {
+                    idle_hidden_count += 1;
+                    println!(
+                        "[HCaptchaAutoClick] HCaptcha 不可见，已连续 {} 秒，将在 {} 秒后停止",
+                        idle_hidden_count,
+                        max_hidden_idle
+                    );
+                    if idle_hidden_count >= max_hidden_idle {
+                        println!("[HCaptchaAutoClick] HCaptcha 长时间不可见，停止监控");
+                        break;
+                    }
+                } else {
+                    // 从未检测到过可见的 HCaptcha，仅简单计数/等待
+                    idle_hidden_count += 1;
+                    if idle_hidden_count >= max_hidden_idle * 2 {
+                        println!("[HCaptchaAutoClick] 一直未检测到 HCaptcha，停止监控");
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
     Ok(())
 }
 

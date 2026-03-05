@@ -116,6 +116,7 @@ pub fn run() {
             commands::update_card_success_time,
             commands::update_card_enabled,
             commands::inject_auto_submit_script,
+            commands::start_hcaptcha_auto_click,
             commands::close_payment_window,
             commands::get_success_bins,
             commands::add_success_bin,

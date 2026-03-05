@@ -714,7 +714,7 @@ const showAutoResetDialog = ref(false);
 const showCardGeneratorDialog = ref(false);
 const showCardPoolDialog = ref(false);
 
-const collisionMode = ref(false);
+const collisionMode = ref(true);
 
 
 // 批量获取试用链接
@@ -1652,21 +1652,17 @@ async function executeBatchGetTrialLink() {
           const randomCard = cardInfoMap.get(win.label);
           if (!randomCard) throw new Error('卡信息生成失败');
 
+          let cardNumber = '';
 
-          let cardNumber = ''
-
-          if(collisionMode.value){
+          if (collisionMode.value) {
             console.log('撞卡模式');
-            cardNumber = randomCard.card_number
-          }else{
+            cardNumber = randomCard.card_number;
+          } else {
             console.log('卡池模式');
-            
-            cardNumber = cardsStore.cards.find((item:any)=>item.enabled === true)?.card_number || ''
-            
+            cardNumber = cardsStore.cards.find((item: any) => item.enabled === true)?.card_number || '';
           }
-          
-        
 
+          // 先自动填写表单
           await invoke('inject_simple_card_fill', {
             windowLabel: win.label,
             cardNumber: cardNumber,
@@ -1681,6 +1677,16 @@ async function executeBatchGetTrialLink() {
             addressLine1: randomCard.billing_address.street_address,
             addressLine2: undefined,
           });
+
+          // 再注入自动提交脚本：等待 Stripe 按钮就绪后自动点击提交
+          await invoke('inject_auto_submit_script', {
+            windowLabel: win.label,
+          });
+
+          // 监控 HCaptcha：在自动提交按钮第一次点击后，延迟 5 秒再开始，每 3 秒在窗口相对坐标 (120-140, 320-335) 真实鼠标点击，直到 HCaptcha 消失/隐藏
+          // await invoke('start_hcaptcha_auto_click', {
+          //   windowLabel: win.label,
+          // });
 
           updateAccStatus(win.id, 'success');
           batchTrialLinkProgress.value.success++;
