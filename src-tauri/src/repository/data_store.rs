@@ -1,4 +1,4 @@
-use crate::models::{Account, AppConfig, OperationLog};
+use crate::models::{Account, AppConfig, OperationLog, PoolCard};
 use crate::utils::{AppError, AppResult};
 use std::fs;
 use std::path::PathBuf;
@@ -396,6 +396,120 @@ impl DataStore {
         
         // 直接返回Token，因为已经是明文
         Ok(account.token.clone())
+    }
+
+    // ==================== 卡池管理方法 ====================
+
+    /// 添加卡片到卡池
+    pub async fn add_card_to_pool(&self, card: crate::utils::card_generator::VirtualCard) -> AppResult<PoolCard> {
+        let mut config = self.config.write().await;
+        
+        // 生成唯一ID
+        let id = uuid::Uuid::new_v4().to_string();
+        
+        // 创建 PoolCard
+        let pool_card = PoolCard {
+            id: id.clone(),
+            card_number: card.card_number,
+            expiry_date: card.expiry_date,
+            cvv: card.cvv,
+            cardholder_name: card.cardholder_name,
+            billing_address: card.billing_address,
+            last_success_time: None,
+            enabled: true,
+        };
+        
+        config.card_pool.push(pool_card.clone());
+        drop(config);
+        
+        self.save().await?;
+        Ok(pool_card)
+    }
+
+    /// 通过卡号添加卡片到卡池
+    pub async fn add_card_by_number(&self, card_number: String) -> AppResult<PoolCard> {
+        // 移除空格
+        let clean_number = card_number.replace(" ", "");
+        
+        // 验证卡号长度（应该是16位）
+        if clean_number.len() != 16 {
+            return Err(AppError::Config("卡号必须是16位数字".to_string()));
+        }
+        
+        // 验证卡号只包含数字
+        if !clean_number.chars().all(|c| c.is_ascii_digit()) {
+            return Err(AppError::Config("卡号只能包含数字".to_string()));
+        }
+        
+        // 检查卡号是否已存在
+        let config = self.config.read().await;
+        if config.card_pool.iter().any(|c| c.card_number.replace(" ", "") == clean_number) {
+            return Err(AppError::Config("卡号已存在于卡池中".to_string()));
+        }
+        drop(config);
+        
+        // 创建虚拟卡（只填充卡号，其他字段使用默认值）
+        let card = crate::utils::card_generator::VirtualCard {
+            card_number: clean_number.clone(),
+            expiry_date: crate::utils::card_generator::CardGenerator::generate_expiry_date(),
+            cvv: crate::utils::card_generator::CardGenerator::generate_cvv(),
+            cardholder_name: crate::utils::card_generator::CardGenerator::generate_name(),
+            billing_address: crate::utils::card_generator::CardGenerator::generate_address(),
+        };
+        
+        self.add_card_to_pool(card).await
+    }
+
+    /// 获取所有卡池中的卡片
+    pub async fn get_all_cards(&self) -> AppResult<Vec<PoolCard>> {
+        let config = self.config.read().await;
+        Ok(config.card_pool.clone())
+    }
+
+    /// 删除卡池中的卡片
+    pub async fn delete_card_from_pool(&self, id: String) -> AppResult<()> {
+        let mut config = self.config.write().await;
+        
+        let initial_len = config.card_pool.len();
+        config.card_pool.retain(|c| c.id != id);
+        
+        if config.card_pool.len() == initial_len {
+            return Err(AppError::Config(format!("Card with id {} not found", id)));
+        }
+        
+        drop(config);
+        self.save().await?;
+        Ok(())
+    }
+
+    /// 更新卡片的最近成功时间
+    pub async fn update_card_success_time(&self, id: String, success_time: String) -> AppResult<()> {
+        let mut config = self.config.write().await;
+        
+        if let Some(card) = config.card_pool.iter_mut().find(|c| c.id == id) {
+            card.last_success_time = Some(success_time);
+        } else {
+            return Err(AppError::Config(format!("Card with id {} not found", id)));
+        }
+        
+        drop(config);
+        self.save().await?;
+        Ok(())
+    }
+
+    /// 更新卡片的启用状态
+    pub async fn update_card_enabled(&self, id: String, enabled: bool) -> AppResult<()> {
+        let mut config = self.config.write().await;
+
+        if let Some(card) = config.card_pool.iter_mut().find(|c| c.id == id) {
+            card.enabled = enabled;
+        } else {
+            return Err(AppError::Config(format!("Card with id {} not found", id)));
+        }
+
+        drop(config);
+        self.save().await?;
+        Ok(())
     }
 
     // 分组管理

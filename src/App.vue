@@ -22,17 +22,17 @@ const elNamespace = computed(() => 'el');
 
 // 禁用右键菜单
 const disableContextMenu = (e: MouseEvent) => {
-  e.preventDefault();
-  return false;
+  // e.preventDefault();
+  // return false;
 };
 
 // 禁用调试快捷键
 const disableDebugKeys = (e: KeyboardEvent) => {
   // 禁用F12
-  if (e.key === 'F12') {
-    e.preventDefault();
-    return false;
-  }
+  // if (e.key === 'F12') {
+  //   e.preventDefault();
+  //   return false;
+  // }
   
   // 禁用Ctrl+Shift+I (开发者工具)
   if (e.ctrlKey && e.shiftKey && e.key === 'I') {

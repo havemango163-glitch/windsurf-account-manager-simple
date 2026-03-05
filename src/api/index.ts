@@ -47,6 +47,33 @@ export const accountApi = {
   }
 };
 
+// 卡池管理API
+export const cardApi = {
+  async addCardToPool(): Promise<any> {
+    return await invoke('add_card_to_pool');
+  },
+
+  async addCardByNumber(cardNumber: string): Promise<any> {
+    return await invoke('add_card_by_number', { cardNumber });
+  },
+
+  async getAllCards(): Promise<any[]> {
+    return await invoke('get_all_cards');
+  },
+
+  async deleteCard(id: string): Promise<void> {
+    return await invoke('delete_card_from_pool', { id });
+  },
+
+  async updateCardSuccessTime(id: string, successTime: string): Promise<void> {
+    return await invoke('update_card_success_time', { id, successTime });
+  },
+
+  async updateCardEnabled(id: string, enabled: boolean): Promise<void> {
+    return await invoke('update_card_enabled', { id, enabled });
+  }
+};
+
 // API操作
 export const apiService = {
   async loginAccount(id: string): Promise<{ 

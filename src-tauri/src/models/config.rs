@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use crate::utils::card_generator::VirtualCard;
 
 // 支付页面延迟的默认值
 fn default_payment_page_delay() -> i32 {
@@ -18,6 +19,26 @@ pub struct GlobalTag {
     pub color: String, // 默认颜色，RGBA或HEX格式
 }
 
+/// 卡池中的卡片（包含虚拟卡信息和额外字段）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PoolCard {
+    pub id: String,
+    #[serde(rename = "card_number")]
+    pub card_number: String,
+    #[serde(rename = "expiry_date")]
+    pub expiry_date: String,
+    pub cvv: String,
+    #[serde(rename = "cardholder_name")]
+    pub cardholder_name: String,
+    #[serde(rename = "billing_address")]
+    pub billing_address: crate::utils::card_generator::BillingAddress,
+    #[serde(rename = "last_success_time")]
+    pub last_success_time: Option<String>, // 最近成功时间（ISO 8601格式）
+    /// 是否启用该卡（用于控制是否参与撞卡/绑卡等操作）
+    #[serde(default)]
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub accounts: Vec<super::Account>,
@@ -27,6 +48,8 @@ pub struct AppConfig {
     pub settings: Settings,
     #[serde(default)]  // 保留字段以便向后兼容，但不再使用
     pub logs: Vec<super::OperationLog>,  // 日志现在存储在独立的 logs.json 文件中
+    #[serde(default, rename = "cardPool")]
+    pub card_pool: Vec<PoolCard>,  // 虚拟卡池
 }
 
 /// 账户排序字段
@@ -236,6 +259,7 @@ impl Default for AppConfig {
             tags: Vec::new(),
             settings: Settings::default(),
             logs: Vec::new(),
+            card_pool: Vec::new(),
         }
     }
 }

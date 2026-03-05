@@ -15,7 +15,7 @@
         "title": "windsurf-account-manager-simple",
         "width": 1200,
         "height": 800,
-        "devtools": false
+        "devtools": true
       }
     ],
     "security": {

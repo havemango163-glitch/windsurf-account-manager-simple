@@ -107,6 +107,14 @@ pub fn run() {
             commands::open_external_link,
             commands::open_external_link_incognito,
             commands::inject_simple_card_fill,
+            
+            // 卡池管理命令
+            commands::add_card_to_pool,
+            commands::add_card_by_number,
+            commands::get_all_cards,
+            commands::delete_card_from_pool,
+            commands::update_card_success_time,
+            commands::update_card_enabled,
             commands::inject_auto_submit_script,
             commands::close_payment_window,
             commands::get_success_bins,

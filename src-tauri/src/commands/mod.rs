@@ -13,6 +13,7 @@ pub mod team_commands;
 pub mod auto_reset_commands;
 pub mod cunzhi_commands;
 pub mod captcha_commands;
+pub mod card_pool_commands;
 
 pub use account_commands::*;
 pub use api_commands::*;
@@ -29,3 +30,4 @@ pub use team_commands::*;
 pub use auto_reset_commands::*;
 pub use cunzhi_commands::*;
 pub use captcha_commands::*;
+pub use card_pool_commands::*;
