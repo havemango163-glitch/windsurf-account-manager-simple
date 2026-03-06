@@ -5,7 +5,7 @@ mod commands;
 mod utils;
 
 use repository::DataStore;
-use commands::{AutoResetStore, ResetRecordStore};
+use commands::{AutoResetStore, ResetRecordStore, CollisionStore};
 use std::sync::Arc;
 use tauri::Manager;
 
@@ -34,6 +34,11 @@ pub fn run() {
             let reset_record_store = ResetRecordStore::new(app.handle())
                 .expect("Failed to initialize reset record store");
             app.manage(Arc::new(reset_record_store));
+            
+            // 初始化已撞卡号存储
+            let collision_store = CollisionStore::new(app.handle())
+                .expect("Failed to initialize collision store");
+            app.manage(Arc::new(collision_store));
             
             // 初始化代理配置
             let store_for_proxy = store.clone();
@@ -125,6 +130,15 @@ pub fn run() {
             commands::reset_test_mode_progress,
             commands::get_test_mode_progress,
             commands::inject_card_collision_script,
+            commands::generate_collision_cards_batch,
+            
+            // 已撞卡号管理命令
+            commands::add_collision_card,
+            commands::add_collision_cards_batch,
+            commands::check_collision_card,
+            commands::get_all_collision_cards,
+            commands::get_collision_cards_count,
+            commands::clear_collision_cards,
             
             // Protobuf解析API命令（返回解析后的数据）
             commands::get_current_user_parsed,

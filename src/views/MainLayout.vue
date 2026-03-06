@@ -1832,12 +1832,41 @@ async function executeBatchGetTrialLink() {
 
       // 预先为每个窗口生成随机卡信息（串行调用避免锁竞争）
       const cardInfoMap = new Map<string, any>();
-      for (const win of windowLabels) {
+      
+      if (collisionMode.value) {
+        // 撞卡模式：一次性生成所有窗口所需的卡号（窗口数 * 30），然后分配给每个窗口
+        const totalCardCount = windowLabels.length * 30;
         try {
-          const randomCard = await invoke<any>('generate_virtual_card');
-          cardInfoMap.set(win.label, randomCard);
+          const allCollisionCards = await invoke<any[]>('generate_collision_cards_batch', {
+            count: totalCardCount
+          });
+          console.log(`[撞卡模式] 一次性生成了 ${allCollisionCards.length} 个卡号，将分配给 ${windowLabels.length} 个窗口`);
+          
+          // 将卡号分配给每个窗口，每个窗口30个
+          windowLabels.forEach((win, index) => {
+            const startIndex = index * 30;
+            const endIndex = startIndex + 30;
+            const windowCards = allCollisionCards.slice(startIndex, endIndex);
+            cardInfoMap.set(win.label, windowCards);
+            console.log(windowCards);
+          });
         } catch (e) {
-          console.error(`生成卡信息失败(${win.email}):`, e);
+          console.error(`生成撞卡卡号失败:`, e);
+          // 如果生成失败，标记所有窗口为失败
+          windowLabels.forEach(win => {
+            updateAccStatus(win.id, 'failed', String(e));
+          });
+          return;
+        }
+      } else {
+        // 普通模式：为每个窗口生成单个卡号
+        for (const win of windowLabels) {
+          try {
+            const randomCard = await invoke<any>('generate_virtual_card');
+            cardInfoMap.set(win.label, [randomCard]);
+          } catch (e) {
+            console.error(`生成卡信息失败(${win.email}):`, e);
+          }
         }
       }
 
@@ -1857,7 +1886,7 @@ async function executeBatchGetTrialLink() {
 
           if (collisionMode.value) {
             console.log('撞卡模式');
-            cardNumber = randomCard.card_number;
+            cardNumber = randomCard[0].card_number;
           } else {
             console.log('卡池模式');
             cardNumber = cardsStore.cards.find((item: any) => item.enabled === true)?.card_number || '';
@@ -1867,15 +1896,15 @@ async function executeBatchGetTrialLink() {
           await invoke('inject_simple_card_fill', {
             windowLabel: win.label,
             cardNumber: cardNumber,
-            expiryDate: randomCard.expiry_date,
-            cvv: randomCard.cvv,
-            cardholderName: randomCard.cardholder_name,
-            country: randomCard.billing_address.country,
-            postalCode: randomCard.billing_address.postal_code,
-            state: randomCard.billing_address.state,
-            city: randomCard.billing_address.city,
-            district: randomCard.billing_address.street_address_line2 || undefined,
-            addressLine1: randomCard.billing_address.street_address,
+            expiryDate: randomCard[0].expiry_date,
+            cvv: randomCard[0].cvv,
+            cardholderName: randomCard[0].cardholder_name,
+            country: randomCard[0].billing_address.country,
+            postalCode: randomCard[0].billing_address.postal_code,
+            state: randomCard[0].billing_address.state,
+            city: randomCard[0].billing_address.city,
+            district: randomCard[0].billing_address.street_address_line2 || undefined,
+            addressLine1: randomCard[0].billing_address.street_address,
             addressLine2: undefined,
           });
 

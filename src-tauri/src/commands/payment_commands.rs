@@ -3,8 +3,10 @@ use std::process::Command;
 use std::sync::Arc;
 use crate::utils::card_generator::{CardGenerator, VirtualCard};
 use crate::repository::DataStore;
+use crate::commands::CollisionStore;
 use serde_json::json;
 use std::fs;
+use std::collections::HashSet;
 use uuid::Uuid;
 
 #[cfg(target_os = "windows")]
@@ -2387,4 +2389,56 @@ pub async fn inject_card_collision_script(
     });
 
     Ok(())
+}
+
+/// 生成指定数量的不重复且不在已撞仓库中的卡号
+#[command]
+pub async fn generate_collision_cards_batch(
+    data_store: State<'_, Arc<DataStore>>,
+    collision_store: State<'_, Arc<CollisionStore>>,
+    count: Option<usize>,
+) -> Result<Vec<VirtualCard>, String> {
+    // 获取设置中的自定义卡头和卡段范围
+    let settings = data_store.get_settings().await.map_err(|e| e.to_string())?;
+    let custom_bin = settings.custom_card_bin;
+    let bin_range = settings.custom_card_bin_range;
+    
+    // 默认生成30个，如果指定了数量则使用指定数量
+    let target_count = count.unwrap_or(30);
+    
+    let mut cards = Vec::new();
+    let mut generated_numbers = HashSet::new();
+    // 最大尝试次数根据目标数量动态调整，避免无限循环
+    let max_attempts = target_count * 500; // 每个卡号最多尝试500次
+    let mut attempts = 0;
+    
+    while cards.len() < target_count && attempts < max_attempts {
+        attempts += 1;
+        
+        // 生成虚拟卡
+        let card = CardGenerator::generate_card_with_bin_or_range(&custom_bin, bin_range.as_deref());
+        
+        // 移除卡号中的空格，用于比较
+        let normalized_number = card.card_number.replace(" ", "");
+        
+        // 检查是否在已撞仓库中
+        if collision_store.contains(&card.card_number).await {
+            continue;
+        }
+        
+        // 检查是否在本次生成的卡号中重复
+        if generated_numbers.contains(&normalized_number) {
+            continue;
+        }
+        
+        // 添加到结果中
+        generated_numbers.insert(normalized_number);
+        cards.push(card);
+    }
+    
+    if cards.len() < target_count {
+        return Err(format!("无法生成足够的卡号，只生成了 {} 个（目标：{} 个，尝试了 {} 次）", cards.len(), target_count, attempts));
+    }
+    
+    Ok(cards)
 }
