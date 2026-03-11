@@ -689,6 +689,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import {
   User,
   Folder,
@@ -1912,6 +1913,30 @@ async function executeBatchGetTrialLink() {
           await invoke('inject_auto_submit_script', {
             windowLabel: win.label,
           });
+
+          // 撞卡模式：注入重试脚本，自动检测错误并切换卡号
+          if (collisionMode.value) {
+            const cardNumbers = randomCard.map((card: any) => card.card_number.replace(/\s/g, ''));
+            await invoke('inject_collision_retry_script', {
+              windowLabel: win.label,
+              cardNumbers: cardNumbers,
+              expiryDate: randomCard[0].expiry_date,
+              cvv: randomCard[0].cvv,
+              cardholderName: randomCard[0].cardholder_name,
+            });
+            
+            // 监听成功事件，将卡号添加到卡池
+            const unlisten = await listen('collision-card-success', (event: any) => {
+              if (event.payload && (event.payload as any).window_label === win.label) {
+                const cardNumber = (event.payload as any).card_number;
+                console.log(`[撞卡模式] 窗口 ${win.label} 绑卡成功，添加到卡池:`, cardNumber);
+                cardsStore.addCardByNumber(cardNumber).catch((e: any) => {
+                  console.error(`[撞卡模式] 添加卡号到卡池失败:`, e);
+                });
+                unlisten();
+              }
+            });
+          }
 
           // 监控 HCaptcha：在自动提交按钮第一次点击后，延迟 5 秒再开始，每 3 秒在窗口相对坐标 (120-140, 320-335) 真实鼠标点击，直到 HCaptcha 消失/隐藏
           // await invoke('start_hcaptcha_auto_click', {

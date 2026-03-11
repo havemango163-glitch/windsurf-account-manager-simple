@@ -379,8 +379,36 @@ function getCreditTypeColor(type: string) {
 function decodeAndShowResponse() {
   if (creditEntries.value?.raw_response) {
     try {
-      // 去除前缀 "data:application/proto;base64,"
-      const base64Data = creditEntries.value.raw_response.substring(30);
+      const rawResponse = creditEntries.value.raw_response;
+      
+      // 检查是否包含 base64 前缀
+      const base64Prefix = 'data:application/proto;base64,';
+      if (!rawResponse.startsWith(base64Prefix)) {
+        ElMessage.warning('响应数据格式不正确，缺少 base64 前缀');
+        console.warn('[CreditHistory] Invalid response format:', rawResponse.substring(0, 50));
+        return;
+      }
+      
+      // 去除前缀并清理字符串
+      let base64Data = rawResponse.substring(base64Prefix.length);
+      // 移除可能的空格、换行等无效字符
+      base64Data = base64Data.trim().replace(/\s/g, '');
+      
+      // 验证 base64 字符串是否有效
+      if (!base64Data || base64Data.length === 0) {
+        ElMessage.warning('Base64 数据为空');
+        return;
+      }
+      
+      // 验证 base64 字符集（只包含 A-Z, a-z, 0-9, +, /, =）
+      const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+      if (!base64Regex.test(base64Data)) {
+        ElMessage.warning('Base64 数据包含无效字符');
+        console.warn('[CreditHistory] Invalid base64 characters:', base64Data.substring(0, 50));
+        return;
+      }
+      
+      // 尝试解码
       const decodedBytes = atob(base64Data);
       
       // 转换为十六进制显示
@@ -401,7 +429,9 @@ function decodeAndShowResponse() {
       console.log('[CreditHistory] Decoded hex:', hex);
       console.log('[CreditHistory] Decoded bytes length:', decodedBytes.length);
     } catch (error) {
-      ElMessage.error('解码失败: ' + error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      ElMessage.error('解码失败: ' + errorMessage);
+      console.error('[CreditHistory] Decode error:', error);
     }
   }
 }
